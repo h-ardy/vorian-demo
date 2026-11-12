@@ -271,36 +271,37 @@ async function post(path, body) {
 }
 function busy(on, msg) { working = on; $("busy").textContent = msg || "Vorian is working. This can take up to 15 seconds."; $("busy").classList.toggle("on", on); }
 
-// Animate the board between two states: every bar keeps its key, so a trip that Vorian moves to
-// another aircraft or pilot slides there; bars that appear fade in.
-function flip(update) {
+// Animate a board between two states: every bar keeps its key, so a trip that Vorian moves to
+// another aircraft or pilot slides there; bars that appear fade in. speed < 1 shortens every step
+// (the month board uses it so a fast plan also looks fast).
+function flip(update, root = "tl", speed = 1) {
   // positions are measured relative to the board, so text appearing above it does not move every bar
-  const rel = e => { const r = e.getBoundingClientRect(), b = $("tl").getBoundingClientRect(); return { left: r.left - b.left, top: r.top - b.top, width: r.width, height: r.height }; };
+  const rel = e => { const r = e.getBoundingClientRect(), b = $(root).getBoundingClientRect(); return { left: r.left - b.left, top: r.top - b.top, width: r.width, height: r.height }; };
   const before = {}, looks = {};
-  document.querySelectorAll("#tl [data-k]").forEach(e => { before[e.dataset.k] = rel(e); looks[e.dataset.k] = [e.className, e.textContent]; });
+  document.querySelectorAll(`#${root} [data-k]`).forEach(e => { before[e.dataset.k] = rel(e); looks[e.dataset.k] = [e.className, e.textContent]; });
   update();
   if (!Object.keys(before).length || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const now = new Set([...document.querySelectorAll("#tl [data-k]")].map(e => e.dataset.k));
+  const now = new Set([...document.querySelectorAll(`#${root} [data-k]`)].map(e => e.dataset.k));
   for (const k in before) {             // bars that are gone fade out where they were
     if (now.has(k)) continue;
     const o = before[k], g = document.createElement("div");
     g.className = looks[k][0].replace(/\b(chg|sel)\b/g, "");
     g.textContent = looks[k][1];
     Object.assign(g.style, { position: "absolute", left: `${o.left}px`, top: `${o.top}px`, width: `${o.width}px`, height: `${o.height}px`, margin: "0", pointerEvents: "none" });
-    $("tl").appendChild(g);
-    g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600, easing: "ease-in", fill: "forwards" }).onfinish = () => g.remove();
+    $(root).appendChild(g);
+    g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 600 * speed, easing: "ease-in", fill: "forwards" }).onfinish = () => g.remove();
   }
-  document.querySelectorAll("#tl [data-k]").forEach(e => {
+  document.querySelectorAll(`#${root} [data-k]`).forEach(e => {
     const o = before[e.dataset.k], n = rel(e);
-    if (!o) { e.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 450, delay: 350, easing: "ease-out", fill: "backwards" }); return; }
+    if (!o) { e.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 450 * speed, delay: 350 * speed, easing: "ease-out", fill: "backwards" }); return; }
     const dx = o.left - n.left, dy = o.top - n.top;
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(o.width - n.width) < 1) return;
     e.animate([{ transform: `translate(${dx}px, ${dy}px)`, width: `${o.width}px` }, { transform: "none", width: `${n.width}px` }],
-      { duration: 900, easing: "cubic-bezier(.25,.8,.25,1)" });
+      { duration: 900 * speed, easing: "cubic-bezier(.25,.8,.25,1)" });
   });
 }
 
-async function render(animate) {
+async function render(animate, root = "tl", speed = 1) {
   const s = sid(), need = [[s, "current"], [s, keyOf(dec())], [s, "0".repeat(info().changes.length)]];
   const i = st.sel ? info().changes.indexOf(st.sel) : -1;
   if (i >= 0) need.push([s, optKey(i, "approve")], [s, optKey(i, "keep")]);
@@ -311,7 +312,7 @@ async function render(animate) {
     try { for (const [a, b] of miss) cache[`${a}|${b}`] = (await post("/view", { sid: a, key: b })).view; }
     finally { busy(false); }
   }
-  if (animate) flip(draw); else draw();
+  if (animate) flip(draw, root, speed); else draw();
 }
 
 function schedule() {
@@ -398,7 +399,9 @@ function month() {
   const v = MSHOW === "after" && a ? a : b;
   const M0 = ms(M.range[0]), M1 = ms(M.range[1]);
   const mp = x => Math.max(0, Math.min(100, ((ms(x) - M0) / (M1 - M0)) * 100));
-  const mbar = (cls, x, y, title) => { const l = mp(x), w = Math.max(0.15, mp(y) - l); return `<div class="mb ${cls}" style="left:${l}%;width:${w}%" title="${esc(title)}"></div>`; };
+  const seen = {};
+  const mkey = k => { seen[k] = (seen[k] || 0) + 1; return `${k}|${seen[k]}`; };
+  const mbar = (cls, x, y, title, k) => { const l = mp(x), w = Math.max(0.15, mp(y) - l); return `<div class="mb ${cls}" data-k="${esc(mkey(k))}" style="left:${l}%;width:${w}%" title="${esc(title)}"></div>`; };
   let h = `<div class="axis"><div></div><div class="track">`;
   for (let t = M0; t < M1; t += 864e5) {
     const x = new Date(t);
@@ -408,13 +411,13 @@ function month() {
   h += `</div></div><div class="group">Aircraft</div>`;
   for (const tail of M.aircraft) {
     h += `<div class="row"><div class="name">${esc(tail)}</div><div class="track">`;
-    for (const l of v.legs.filter(l => l.tail === tail)) h += mbar(l.kind === "empty" ? "empty" : "trip", l.off, l.on, `${l.kind === "empty" ? "Empty leg" : l.trip} ${ap(l.from)} to ${ap(l.to)}, ${when(l.off)}`);
+    for (const l of v.legs.filter(l => l.tail === tail)) h += mbar(l.kind === "empty" ? "empty" : "trip", l.off, l.on, `${l.kind === "empty" ? "Empty leg" : l.trip} ${ap(l.from)} to ${ap(l.to)}, ${when(l.off)}`, `${l.kind}|${l.trip}|${l.from}`);
     h += `</div></div>`;
   }
   h += `<div class="group">Pilots</div>`;
   for (const c of M.crew) {
     h += `<div class="row"><div class="name">${esc(c)}</div><div class="track">`;
-    for (const x of v.duties.filter(x => x.crew === c)) h += mbar(x.verdict === "fail" ? "fail" : "pass", x.start, x.end, `${c}: ${x.trips.join(", ")}, ${when(x.start)}${x.verdict === "fail" ? ", breaks a rule" : ""}`);
+    for (const x of v.duties.filter(x => x.crew === c)) h += mbar(x.verdict === "fail" ? "fail" : "pass", x.start, x.end, `${c}: ${x.trips.join(", ")}, ${when(x.start)}${x.verdict === "fail" ? ", breaks a rule" : ""}`, `duty|${x.trips.join("+")}`);
     h += `</div></div>`;
   }
   $("mo-tl").innerHTML = h;
@@ -733,6 +736,8 @@ document.addEventListener("click", async e => {
       finally { busy(false); }
     }
     else return;
+    const mAnim = b.id === "mo-plan" || !!b.dataset.mshow;
+    if (mAnim) { await render(true, "mo-tl", 0.4); return; }
     await render(b.id === "reveal" || !!b.dataset.show || b.dataset.dec !== undefined || b.dataset.undo !== undefined || b.id === "all" || b.id === "sick");
   } catch (err) {
     alert_(err.message);
