@@ -57,6 +57,7 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .nowline { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--fail); z-index: 3; }
 .nowline span { position: absolute; top: 6px; left: 4px; font: 600 10.5px var(--mono); color: var(--fail); background: var(--surface); padding: 0 3px; }
 .row { border-top: 1px solid var(--rule); }
+.row.lane { border-top: 1px dashed #e6e9ee; }
 .name { font: 500 12.5px var(--mono); }
 .name small { display: block; font: 11px var(--body); color: var(--muted); }
 .track { position: relative; height: 38px; }
@@ -708,9 +709,19 @@ function board(v) {
   }
   const open = D.trips.filter(t => !v.asg[t.id] || !v.asg[t.id][0]);
   if (open.length) {
-    h += `<div class="row" data-row="open"><div class="name">Not covered<small>subcharter or decide</small></div><div class="track">`;
-    for (const t of open) keyed(`trip|${t.id}|${t.from}`, () => bar("open", t.dep, new Date(ms(t.dep) + 3 * 36e5).toISOString().slice(0, 16), t.id, `${t.id} ${ap(t.from)} to ${ap(t.to)}: no crew`, t.id, ` data-drag="trip" data-tid="${esc(t.id)}"`));
-    h += flush() + `</div></div>`;
+    // Uncovered trips that overlap in time go on separate lines, so every one is readable and labeled.
+    const lanes = [];
+    for (const t of open.slice().sort((x, y) => x.dep.localeCompare(y.dep))) {
+      const a = ms(t.dep), z = a + 2 * 36e5;
+      let lane = lanes.find(l => l.end + 3.5 * 36e5 <= a);   // leave room for the label beside the bar
+      if (!lane) { lane = { end: 0, trips: [] }; lanes.push(lane); }
+      lane.trips.push(t); lane.end = z;
+    }
+    lanes.forEach((lane, i) => {
+      h += `<div class="row${i ? " lane" : ""}" data-row="open"><div class="name">${i ? "" : `Not covered<small>subcharter or decide</small>`}</div><div class="track">`;
+      for (const t of lane.trips) keyed(`trip|${t.id}|${t.from}`, () => bar("open", t.dep, new Date(ms(t.dep) + 2 * 36e5).toISOString().slice(0, 16), [`${t.id} ${ap(t.from)}\u2192${ap(t.to)}`, t.id], `${t.id} ${ap(t.from)} to ${ap(t.to)}, ${when(t.dep)}: no crew`, t.id, ` data-drag="trip" data-tid="${esc(t.id)}"`));
+      h += flush() + `</div></div>`;
+    });
   }
   h += `<div class="group">Pilots</div>`;
   for (const c of D.crew) {
